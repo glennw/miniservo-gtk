@@ -23,6 +23,14 @@
 
 #include "tegtkgl.h"
 
+static XDisplay *g_x_display = NULL;
+
+CEF_EXPORT XDisplay* cef_get_xdisplay()
+{
+    assert(g_x_display);
+    return g_x_display;
+}
+
 struct ServoTabEventHandler
 {
     virtual void LoadStateChanged(bool loading, bool canGoForward, bool canGoBack) = 0;
@@ -59,9 +67,9 @@ struct ServoTab : public CefClient,
         g_signal_connect(mpWidget, "scroll-event", G_CALLBACK(on_scroll_event), this);
         g_signal_connect(mpWidget, "key-press-event", G_CALLBACK(on_key_event), this);
 
-        unsigned long display = (unsigned long) te_gtkgl_get_x11_display(mpWidget);
+        g_x_display = (XDisplay *) te_gtkgl_get_x11_display(mpWidget);
         CefWindowInfo windowInfo;
-        windowInfo.SetAsWindowless(display, false);
+        windowInfo.SetAsWindowless(0, false);
 
         CefBrowserSettings browserSettings;
         std::string INITIAL_URL = "https://duckduckgo.com";
