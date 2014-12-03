@@ -54,7 +54,6 @@ struct ServoTab : public CefClient,
         gtk_grid_attach(pParent, mpWidget, 0, 2, 4, 1);
 
         gtk_widget_set_can_focus(mpWidget, TRUE);
-        gtk_widget_grab_focus(mpWidget);
 
         gtk_widget_add_events(mpWidget, GDK_CONFIGURE);
         gtk_widget_add_events(mpWidget, GDK_BUTTON_PRESS_MASK);
@@ -154,7 +153,7 @@ private:
 
         cef_key_event_t cCefKeyEvent;
         cCefKeyEvent.type = KEYEVENT_RAWKEYDOWN;
-        cCefKeyEvent.character = 0;//character;
+        cCefKeyEvent.character = event->key.keyval;
         cCefKeyEvent.modifiers = 0;
         cCefKeyEvent.windows_key_code = event->key.hardware_keycode;    // FIXME(pcwalton)
         cCefKeyEvent.native_key_code = event->key.hardware_keycode;
@@ -182,6 +181,10 @@ private:
         ServoTab *self = (ServoTab *) user_data;
 
         if (event->type == GDK_BUTTON_PRESS) {
+            if (!gtk_widget_has_focus(widget)) {
+                gtk_widget_grab_focus(widget);
+            }
+
             gdouble x = self->mHiDpiScale * ((GdkEventButton*)event)->x;
             gdouble y = self->mHiDpiScale * ((GdkEventButton*)event)->y;
 
