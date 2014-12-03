@@ -31,6 +31,12 @@ CEF_EXPORT XDisplay* cef_get_xdisplay()
     return g_x_display;
 }
 
+static bool starts_with(const std::string &haystack, const std::string &needle)
+{
+    return needle.length() <= haystack.length()
+        && equal(needle.begin(), needle.end(), haystack.begin());
+}
+
 struct ServoTabEventHandler
 {
     virtual void LoadStateChanged(bool loading, bool canGoForward, bool canGoBack) = 0;
@@ -337,7 +343,11 @@ struct MiniServo
 
     static void cb_url_changed(GtkEntry *e, gpointer user_data) {
         MiniServo *ms = (MiniServo *) user_data;
-        const char *url = gtk_entry_get_text(e);
+        std::string url(gtk_entry_get_text(e));
+
+        if (!starts_with(url, "http://") && !starts_with(url, "https://")) {
+            url = "http://" + url;
+        }
 
         CefString cefString(url);
         if (ms->mpCurrentTab->mpBrowser == nullptr)
