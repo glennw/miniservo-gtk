@@ -1,17 +1,13 @@
 Building MiniServo-GTK
 ----------------------
 
-This is a 1st commit - it's barely functional at the moment, and crashes on
-unexpected inputs (like if you enter a URL without http://... )
-
 There's currently several submodules that needed minor changes, which makes it 
 more complex to build at the moment. These should be merged into master in the
 near future which will simplify things.
 
-1) Clone https://github.com/glennw/servo and checkout cef-linux branch
-2) Clone https://github.com/glennw/rust-harfbuzz and checkout cef branch
-3) Clone https://github.com/glennw/rust-png and checkout cef branch
-4) Clone https://github.com/glennw/miniservo-gtk
+1) Clone https://github.com/glennw/rust-harfbuzz and checkout cef branch
+2) Clone https://github.com/glennw/rust-png and checkout cef branch
+3) Clone https://github.com/glennw/miniservo-gtk
 
 Build CEF libembedding (you need to setup .cargo/config to use rust-harfbuzz and
 rust-png for now).
