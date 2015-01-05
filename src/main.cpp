@@ -37,27 +37,71 @@ static bool starts_with(const std::string &haystack, const std::string &needle)
         && equal(needle.begin(), needle.end(), haystack.begin());
 }
 
-struct ServoTabEventHandler
+struct TabEventHandler
 {
-    virtual void LoadStateChanged(bool loading, bool canGoForward, bool canGoBack) = 0;
+    virtual void OnTitleChanged(struct ServoTab *pTab, const char *pTitle) = 0;
 };
 
 struct ServoTab : public CefClient,
                   public CefLoadHandler,
-                  public CefRenderHandler
+                  public CefRenderHandler,
+                  public CefStringVisitor
 {
     explicit ServoTab() {}
 
-    void init(ServoTabEventHandler *pEventHandler, GtkGrid *pParent)
+    struct Widgets
+    {
+        GtkLabel *page_title;
+
+        GtkGrid *grid;
+        GtkEntry *url_bar;
+        GtkSpinner *progress_spinner;
+        GtkButton *back_button;
+        GtkButton *forward_button;
+    };
+
+    void get_widgets(GtkBuilder *pBuilder)
+    {
+        mWidgets.grid = GTK_GRID(gtk_builder_get_object(pBuilder, "grid"));
+        mWidgets.url_bar = GTK_ENTRY(gtk_builder_get_object(pBuilder, "url_bar"));
+        mWidgets.progress_spinner = GTK_SPINNER(gtk_builder_get_object(pBuilder, "progress_spinner"));
+        mWidgets.back_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "back_button"));
+        mWidgets.forward_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "forward_button"));
+
+        assert(mWidgets.grid);
+        assert(mWidgets.url_bar);
+        assert(mWidgets.progress_spinner);
+        assert(mWidgets.back_button);
+        assert(mWidgets.forward_button);
+
+        g_signal_connect(mWidgets.url_bar, "activate", G_CALLBACK(cb_url_changed), this);
+        g_signal_connect(mWidgets.back_button, "clicked", G_CALLBACK(cb_back_clicked), this);
+        g_signal_connect(mWidgets.forward_button, "clicked", G_CALLBACK(cb_forward_clicked), this);
+    }
+
+    void init(TabEventHandler *pEventHandler, GtkNotebook *pParent)
     {
         mpEventHandler = pEventHandler;
+        mTitleUpdatePending = true;
         mWidth = 800;
         mHeight = 600;
         mpWidget = te_gtkgl_new();
         mHiDpiScale = gdk_screen_get_monitor_scale_factor(GDK_SCREEN(gdk_screen_get_default()), 0);
 
-        gtk_widget_set_size_request(mpWidget, mWidth, mHeight);
-        gtk_grid_attach(pParent, mpWidget, 0, 2, 4, 1);
+        GtkBuilder *pTabBuilder = gtk_builder_new();
+        GError *pError = NULL;
+        if (!gtk_builder_add_from_file(pTabBuilder, "../miniservo-tab.glade", &pError)) {
+            g_warning("%s", pError->message);
+            exit(EXIT_FAILURE);
+        }
+
+        mWidgets.page_title = GTK_LABEL(gtk_label_new("New Tab"));
+        gtk_widget_set_margin_left(GTK_WIDGET(mWidgets.page_title), 4);
+        gtk_widget_set_margin_right(GTK_WIDGET(mWidgets.page_title), 4);
+
+        get_widgets(pTabBuilder);
+        gtk_notebook_append_page(pParent, GTK_WIDGET(mWidgets.grid), GTK_WIDGET(mWidgets.page_title));
+        g_object_unref(G_OBJECT(pTabBuilder));
 
         gtk_widget_set_can_focus(mpWidget, TRUE);
 
@@ -71,6 +115,9 @@ struct ServoTab : public CefClient,
         g_signal_connect(mpWidget, "configure-event", G_CALLBACK(on_configure_event), this);
         g_signal_connect(mpWidget, "scroll-event", G_CALLBACK(on_scroll_event), this);
         g_signal_connect(mpWidget, "key-press-event", G_CALLBACK(on_key_event), this);
+
+        gtk_widget_set_size_request(mpWidget, mWidth, mHeight);
+        gtk_grid_attach(mWidgets.grid, mpWidget, 0, 1, 4, 1);
 
         g_x_display = (XDisplay *) te_gtkgl_get_x11_display(mpWidget);
         CefWindowInfo windowInfo;
@@ -100,7 +147,15 @@ struct ServoTab : public CefClient,
                                       bool isLoading,
                                       bool canGoBack,
                                       bool canGoForward) {
-        mpEventHandler->LoadStateChanged(isLoading, canGoBack, canGoForward);
+        mTitleUpdatePending = true;
+
+        gtk_widget_set_sensitive(GTK_WIDGET(mWidgets.back_button), canGoBack);
+        gtk_widget_set_sensitive(GTK_WIDGET(mWidgets.forward_button), canGoForward);
+        if (isLoading) {
+            gtk_spinner_start(mWidgets.progress_spinner);
+        } else {
+            gtk_spinner_stop(mWidgets.progress_spinner);
+        }
     }
 
     // CefRenderHandler implementation
@@ -126,16 +181,34 @@ struct ServoTab : public CefClient,
         te_gtkgl_swap(TE_GTKGL(mpWidget));
     }
 
-    GtkWidget *mpWidget;
-    CefRefPtr<CefBrowser> mpBrowser;
-    int mWidth, mHeight;
-    int mHiDpiScale;
-    
+    // CefStringVisitor implementation
+    virtual void Visit(const CefString &s) {
+        std::string title = s.ToString();
+        if (title.length() == 0) {
+            title = mpBrowser->GetMainFrame()->GetURL().ToString();
+        }
+        gtk_label_set_text(mWidgets.page_title, title.c_str());
+        mpEventHandler->OnTitleChanged(this, title.c_str());
+    }
+
+    void update() {
+        if (mTitleUpdatePending) {
+            mpBrowser->GetMainFrame()->GetText(this);
+            mTitleUpdatePending = false;
+        }
+    }
+
 private:
     IMPLEMENT_REFCOUNTING(ServoTab);
     DISALLOW_COPY_AND_ASSIGN(ServoTab);
 
-    ServoTabEventHandler *mpEventHandler;
+    TabEventHandler *mpEventHandler;
+    Widgets mWidgets;
+    bool mTitleUpdatePending;
+    GtkWidget *mpWidget;
+    CefRefPtr<CefBrowser> mpBrowser;
+    int mWidth, mHeight;
+    int mHiDpiScale;
 
     static gboolean on_configure_event(GtkWindow *window, GdkEvent *event, gpointer user_data)
     {
@@ -204,25 +277,50 @@ private:
         return FALSE;
     }
 
+    static void cb_back_clicked(GtkButton *button, gpointer user_data)
+    {
+        ServoTab *pTab = (ServoTab *) user_data;
+        if (pTab && pTab->mpBrowser) {
+            pTab->mpBrowser->GoBack();
+        }
+    }
+
+    static void cb_forward_clicked(GtkButton *button, gpointer user_data)
+    {
+        ServoTab *pTab = (ServoTab *) user_data;
+        if (pTab && pTab->mpBrowser) {
+            pTab->mpBrowser->GoForward();
+        }
+    }
+
+    static void cb_url_changed(GtkEntry *e, gpointer user_data) {
+        std::string url(gtk_entry_get_text(e));
+        if (!starts_with(url, "http://") && !starts_with(url, "https://")) {
+            url = "http://" + url;
+        }
+        CefString cefString(url);
+
+        ServoTab *pTab = (ServoTab *) user_data;
+        if (pTab->mpBrowser == nullptr)
+            return;
+        if (pTab->mpBrowser->GetMainFrame() == nullptr)
+            return;
+        pTab->mpBrowser->GetMainFrame()->LoadURL(cefString);
+    }
+
 };
 
 struct MiniServo
 {
-    struct TabEventHandler : public ServoTabEventHandler
-    {
-        TabEventHandler(MiniServo *pApp) : mpApp(pApp) {}
+    struct EventHandler : public TabEventHandler {
+        EventHandler(MiniServo *pApp) : mpApp(pApp) {}
 
-        virtual void LoadStateChanged(bool loading, bool canGoForward, bool canGoBack)
-        {
-            gtk_widget_set_sensitive(GTK_WIDGET(mpApp->mWidgets.back_button), canGoBack);
-            gtk_widget_set_sensitive(GTK_WIDGET(mpApp->mWidgets.forward_button), canGoForward);
-            if (loading) {
-                gtk_spinner_start(mpApp->mWidgets.progress_spinner);
-            } else {
-                gtk_spinner_stop(mpApp->mWidgets.progress_spinner);
-            }
+        virtual void OnTitleChanged(struct ServoTab *pTab, const char *pTitle) {
+            // TODO: Check if current tab when multiple tabs are working
+            mpApp->set_title(pTitle);
         }
 
+    private:
         MiniServo *mpApp;
     };
 
@@ -231,29 +329,26 @@ struct MiniServo
         XInitThreads();
         gtk_init (&argc, &argv);
 
-        //CefScopedArgArray scoped_arg_array(argc, argv);
-        //char** argv_copy = scoped_arg_array.array();
-    
         CefMainArgs main_args(argc, argv);
         CefSettings settings;
         CefInitialize(main_args, settings, NULL, NULL);
 
-        GtkBuilder *pBuilder = gtk_builder_new();
+        GtkBuilder *pWindowBuilder = gtk_builder_new();
         GError *pError = NULL;
-        if (!gtk_builder_add_from_file(pBuilder, "../miniservo.glade", &pError)) {
+        if (!gtk_builder_add_from_file(pWindowBuilder, "../miniservo.glade", &pError)) {
             g_warning("%s", pError->message);
             exit(EXIT_FAILURE);
         }
 
-        get_widgets(pBuilder);
-        gtk_builder_connect_signals(pBuilder, &mWidgets);
-        g_object_unref(G_OBJECT(pBuilder));
-        gtk_widget_show_all(mWidgets.main_window);
+        get_widgets(pWindowBuilder);
+        gtk_builder_connect_signals(pWindowBuilder, &mWidgets);
+        g_object_unref(G_OBJECT(pWindowBuilder));
+        gtk_widget_show_all(GTK_WIDGET(mWidgets.main_window));
 
         mpCurrentTab = new ServoTab;
-        mpCurrentTab->init(&mEventHandler, mWidgets.main_grid);
+        mpCurrentTab->init(&mEventHandler, mWidgets.notebook);
 
-        gtk_widget_show_all(mWidgets.main_window);
+        gtk_widget_show_all(GTK_WIDGET(mWidgets.main_window));
     }
 
     ~MiniServo()
@@ -266,6 +361,9 @@ struct MiniServo
         while (true) {
             gtk_main_iteration_do(false);
             CefDoMessageLoopWork();
+            if (mpCurrentTab) {
+                mpCurrentTab->update();
+            }
 
             if (mQuit) {
                 break;
@@ -275,19 +373,15 @@ struct MiniServo
 
     struct Widgets
     {
-        GtkWidget *main_window;
-        GtkEntry *url_bar;
+        GtkWindow *main_window;
+        GtkNotebook *notebook;
         GtkStatusbar *status_bar;
-        GtkGrid *main_grid;
-        GtkSpinner *progress_spinner;
-        GtkButton *back_button;
-        GtkButton *forward_button;
     };
 
     ServoTab *mpCurrentTab;
     Widgets mWidgets;
     bool mQuit;
-    TabEventHandler mEventHandler;
+    EventHandler mEventHandler;
 
     void push_status(const char *pStatus)
     {
@@ -302,59 +396,24 @@ struct MiniServo
 
     void get_widgets(GtkBuilder *pBuilder)
     {
-        mWidgets.main_window = GTK_WIDGET(gtk_builder_get_object(pBuilder, "window1"));
+        mWidgets.main_window = GTK_WINDOW(gtk_builder_get_object(pBuilder, "window1"));
         mWidgets.status_bar = GTK_STATUSBAR(gtk_builder_get_object(pBuilder, "status_bar"));
-        mWidgets.url_bar = GTK_ENTRY(gtk_builder_get_object(pBuilder, "entry1"));
-        mWidgets.main_grid = GTK_GRID(gtk_builder_get_object(pBuilder, "grid_main"));
-        mWidgets.progress_spinner = GTK_SPINNER(gtk_builder_get_object(pBuilder, "spinner1"));
-        mWidgets.back_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "button_back"));
-        mWidgets.forward_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "button_forward"));
+        mWidgets.notebook = GTK_NOTEBOOK(gtk_builder_get_object(pBuilder, "notebook1"));
 
         assert(mWidgets.main_window);
+        assert(mWidgets.notebook);
         assert(mWidgets.status_bar);
-        assert(mWidgets.url_bar);
-        assert(mWidgets.main_grid);
-        assert(mWidgets.progress_spinner);  
-        assert(mWidgets.back_button);
-        assert(mWidgets.forward_button);  
 
-        g_signal_connect(mWidgets.main_window, "destroy", G_CALLBACK(cb_quit), this);
-        g_signal_connect(mWidgets.url_bar, "activate", G_CALLBACK(cb_url_changed), this);
-        g_signal_connect(mWidgets.back_button, "clicked", G_CALLBACK(cb_back_clicked), this);
-        g_signal_connect(mWidgets.forward_button, "clicked", G_CALLBACK(cb_forward_clicked), this);
+        g_signal_connect(GTK_WIDGET(mWidgets.main_window), "destroy", G_CALLBACK(cb_quit), this);
     }
 
-    static void cb_back_clicked(GtkButton *button, gpointer user_data)
-    {
-        MiniServo *ms = (MiniServo *) user_data;
-        ms->mpCurrentTab->mpBrowser->GoBack();
-    }
-
-    static void cb_forward_clicked(GtkButton *button, gpointer user_data)
-    {
-        MiniServo *ms = (MiniServo *) user_data;
-        ms->mpCurrentTab->mpBrowser->GoForward();
+    void set_title(const char *pTitle) {
+        gtk_window_set_title(mWidgets.main_window, pTitle);
     }
 
     static void cb_quit(GtkWidget *, gpointer user_data) {
         MiniServo *ms = (MiniServo *) user_data;
         ms->mQuit = true;
-    }
-
-    static void cb_url_changed(GtkEntry *e, gpointer user_data) {
-        MiniServo *ms = (MiniServo *) user_data;
-        std::string url(gtk_entry_get_text(e));
-
-        if (!starts_with(url, "http://") && !starts_with(url, "https://")) {
-            url = "http://" + url;
-        }
-
-        CefString cefString(url);
-        if (ms->mpCurrentTab->mpBrowser == nullptr)
-          return;
-        if (ms->mpCurrentTab->mpBrowser->GetMainFrame() == nullptr)
-          return;
-        ms->mpCurrentTab->mpBrowser->GetMainFrame()->LoadURL(cefString);
     }
 
     static void on_load_state_changed(void *user_data)

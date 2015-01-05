@@ -136,4 +136,4 @@ link_directories(${GTK3_LIBRARY_DIRS} ../servo/ports/cef/target)
 
 add_executable(miniservo ${MINISERVO_SRCS})
 
-target_link_libraries(miniservo ${GTK3_LIBRARIES} X11 GL embedding-e48887f1c3955080)
+target_link_libraries(miniservo ${GTK3_LIBRARIES} X11 GL embedding-87c033796c1cb109)
