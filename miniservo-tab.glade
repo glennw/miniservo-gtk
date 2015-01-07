@@ -62,33 +62,5 @@
         <property name="height">1</property>
       </packing>
     </child>
-    <child>
-      <object class="GtkSpinner" id="progress_spinner">
-        <property name="visible">True</property>
-        <property name="can_focus">False</property>
-        <property name="margin_left">4</property>
-        <property name="margin_right">4</property>
-        <property name="margin_top">4</property>
-        <property name="margin_bottom">4</property>
-      </object>
-      <packing>
-        <property name="left_attach">3</property>
-        <property name="top_attach">0</property>
-        <property name="width">1</property>
-        <property name="height">1</property>
-      </packing>
-    </child>
-    <child>
-      <placeholder/>
-    </child>
-    <child>
-      <placeholder/>
-    </child>
-    <child>
-      <placeholder/>
-    </child>
-    <child>
-      <placeholder/>
-    </child>
   </object>
 </interface>

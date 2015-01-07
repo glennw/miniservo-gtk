@@ -39,7 +39,68 @@ static bool starts_with(const std::string &haystack, const std::string &needle)
 
 struct TabEventHandler
 {
-    virtual void OnTitleChanged(struct ServoTab *pTab, const char *pTitle) = 0;
+    virtual void OnClosed(struct ServoTab *pTab) = 0;
+    virtual void OnTitleChanged(struct ServoTab *pTab, const std::string &title) = 0;
+};
+
+struct ServoTabLabel
+{
+    typedef void CloseClickedCallback(ServoTab *pTab);
+
+    struct Widgets
+    {
+        GtkBox *box;
+        GtkLabel *label;
+        GtkButton *close_button;
+    };
+
+    ServoTabLabel(CloseClickedCallback *pCallback, ServoTab *pOwner)
+    {
+        mpCallback = pCallback;
+        mpOwner = pOwner;
+        GtkBuilder *pBuilder = gtk_builder_new();
+        GError *pError = NULL;
+        if (!gtk_builder_add_from_file(pBuilder, "../miniservo-tab-label.glade", &pError)) {
+            g_warning("%s", pError->message);
+            exit(EXIT_FAILURE);
+        }
+        get_widgets(pBuilder);
+        g_signal_connect(mWidgets.close_button, "clicked", G_CALLBACK(close_callback), this);
+
+        // TODO: Cleanup
+        //g_object_unref(G_OBJECT(pBuilder));
+    }
+
+    void get_widgets(GtkBuilder *pBuilder)
+    {
+        mWidgets.box = GTK_BOX(gtk_builder_get_object(pBuilder, "box"));
+        mWidgets.label = GTK_LABEL(gtk_builder_get_object(pBuilder, "label"));
+        mWidgets.close_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "button"));
+
+        assert(mWidgets.box);
+        assert(mWidgets.label);
+        assert(mWidgets.close_button);
+    }
+
+    GtkWidget *get_widget()
+    {
+        return GTK_WIDGET(mWidgets.box);
+    }
+
+    void set_text(const char *pText)
+    {
+        gtk_label_set_text(mWidgets.label, pText);
+    }
+
+    static void close_callback(GtkWidget *, gpointer user_data)
+    {
+        ServoTabLabel *pThis = (ServoTabLabel *) user_data;
+        pThis->mpCallback(pThis->mpOwner);
+    }
+
+    Widgets mWidgets;
+    ServoTab *mpOwner;
+    CloseClickedCallback *mpCallback;
 };
 
 struct ServoTab : public CefClient,
@@ -51,11 +112,10 @@ struct ServoTab : public CefClient,
 
     struct Widgets
     {
-        GtkLabel *page_title;
+        ServoTabLabel *page_title;
 
         GtkGrid *grid;
         GtkEntry *url_bar;
-        GtkSpinner *progress_spinner;
         GtkButton *back_button;
         GtkButton *forward_button;
     };
@@ -64,13 +124,11 @@ struct ServoTab : public CefClient,
     {
         mWidgets.grid = GTK_GRID(gtk_builder_get_object(pBuilder, "grid"));
         mWidgets.url_bar = GTK_ENTRY(gtk_builder_get_object(pBuilder, "url_bar"));
-        mWidgets.progress_spinner = GTK_SPINNER(gtk_builder_get_object(pBuilder, "progress_spinner"));
         mWidgets.back_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "back_button"));
         mWidgets.forward_button = GTK_BUTTON(gtk_builder_get_object(pBuilder, "forward_button"));
 
         assert(mWidgets.grid);
         assert(mWidgets.url_bar);
-        assert(mWidgets.progress_spinner);
         assert(mWidgets.back_button);
         assert(mWidgets.forward_button);
 
@@ -81,6 +139,7 @@ struct ServoTab : public CefClient,
 
     void init(TabEventHandler *pEventHandler, GtkNotebook *pParent)
     {
+        mTitle = "New Tab";
         mpEventHandler = pEventHandler;
         mTitleUpdatePending = true;
         mWidth = 800;
@@ -95,12 +154,10 @@ struct ServoTab : public CefClient,
             exit(EXIT_FAILURE);
         }
 
-        mWidgets.page_title = GTK_LABEL(gtk_label_new("New Tab"));
-        gtk_widget_set_margin_left(GTK_WIDGET(mWidgets.page_title), 4);
-        gtk_widget_set_margin_right(GTK_WIDGET(mWidgets.page_title), 4);
+        mWidgets.page_title = new ServoTabLabel(on_tab_closed, this);
 
         get_widgets(pTabBuilder);
-        gtk_notebook_append_page(pParent, GTK_WIDGET(mWidgets.grid), GTK_WIDGET(mWidgets.page_title));
+        gtk_notebook_append_page(pParent, GTK_WIDGET(mWidgets.grid), mWidgets.page_title->get_widget());
         g_object_unref(G_OBJECT(pTabBuilder));
 
         gtk_widget_set_can_focus(mpWidget, TRUE);
@@ -134,6 +191,27 @@ struct ServoTab : public CefClient,
         mpBrowser->GetHost()->WasResized();
     }
 
+    void on_focus_lost()
+    {
+        mpBrowser->GetHost()->SendFocusEvent(false);
+    }
+
+    void on_focus_gained()
+    {
+        mpBrowser->GetHost()->SendFocusEvent(true);
+    }
+
+    std::string get_title()
+    {
+        return mTitle;
+    }
+
+    static void on_tab_closed(ServoTab *pTab)
+    {
+        pTab->mpBrowser->GetHost()->CloseBrowser(true);
+        pTab->mpEventHandler->OnClosed(pTab);
+    }
+
     // CefClient implementation
     virtual CefRefPtr<CefLoadHandler> GetLoadHandler() override {
         return this;
@@ -151,11 +229,6 @@ struct ServoTab : public CefClient,
 
         gtk_widget_set_sensitive(GTK_WIDGET(mWidgets.back_button), canGoBack);
         gtk_widget_set_sensitive(GTK_WIDGET(mWidgets.forward_button), canGoForward);
-        if (isLoading) {
-            gtk_spinner_start(mWidgets.progress_spinner);
-        } else {
-            gtk_spinner_stop(mWidgets.progress_spinner);
-        }
     }
 
     // CefRenderHandler implementation
@@ -183,12 +256,12 @@ struct ServoTab : public CefClient,
 
     // CefStringVisitor implementation
     virtual void Visit(const CefString &s) {
-        std::string title = s.ToString();
-        if (title.length() == 0) {
-            title = mpBrowser->GetMainFrame()->GetURL().ToString();
+        mTitle = s.ToString();
+        if (mTitle.length() == 0) {
+            mTitle = mpBrowser->GetMainFrame()->GetURL().ToString();
         }
-        gtk_label_set_text(mWidgets.page_title, title.c_str());
-        mpEventHandler->OnTitleChanged(this, title.c_str());
+        mWidgets.page_title->set_text(mTitle.c_str());
+        mpEventHandler->OnTitleChanged(this, mTitle.c_str());
     }
 
     void update() {
@@ -198,17 +271,19 @@ struct ServoTab : public CefClient,
         }
     }
 
+    Widgets mWidgets;
+
 private:
     IMPLEMENT_REFCOUNTING(ServoTab);
     DISALLOW_COPY_AND_ASSIGN(ServoTab);
 
     TabEventHandler *mpEventHandler;
-    Widgets mWidgets;
     bool mTitleUpdatePending;
     GtkWidget *mpWidget;
     CefRefPtr<CefBrowser> mpBrowser;
     int mWidth, mHeight;
     int mHiDpiScale;
+    std::string mTitle;
 
     static gboolean on_configure_event(GtkWindow *window, GdkEvent *event, gpointer user_data)
     {
@@ -315,16 +390,30 @@ struct MiniServo
     struct EventHandler : public TabEventHandler {
         EventHandler(MiniServo *pApp) : mpApp(pApp) {}
 
-        virtual void OnTitleChanged(struct ServoTab *pTab, const char *pTitle) {
-            // TODO: Check if current tab when multiple tabs are working
-            mpApp->set_title(pTitle);
+        virtual void OnTitleChanged(struct ServoTab *pTab, const std::string &title)
+        {
+            if (pTab == mpApp->mpCurrentTab)
+            {
+                mpApp->set_title(title);
+            }
+        }
+        virtual void OnClosed(struct ServoTab *pTab)
+        {
+            printf("TODO: Implement clean shutdown!\n");
+            //assert(mpApp->mpCurrentTab != pTab);    // todo
+            //mpApp->mTabs.erase(std::remove(mpApp->mTabs.begin(), mpApp->mTabs.end(), pTab), mpApp->mTabs.end());
+            //gint page_index = gtk_notebook_page_num(mpApp->mWidgets.notebook, GTK_WIDGET(pTab->mWidgets.grid));
+            //assert(page_index != -1);
+            //gtk_notebook_remove_page(mpApp->mWidgets.notebook, page_index);
+            //delete pTab;
+            // TODO: This leaks like a sieve.
         }
 
     private:
         MiniServo *mpApp;
     };
 
-    MiniServo(int argc, char **argv) : mQuit(false), mEventHandler(this)
+    MiniServo(int argc, char **argv) : mQuit(false), mEventHandler(this), mpCurrentTab(NULL)
     {
         XInitThreads();
         gtk_init (&argc, &argv);
@@ -345,10 +434,9 @@ struct MiniServo
         g_object_unref(G_OBJECT(pWindowBuilder));
         gtk_widget_show_all(GTK_WIDGET(mWidgets.main_window));
 
-        mpCurrentTab = new ServoTab;
-        mpCurrentTab->init(&mEventHandler, mWidgets.notebook);
+        add_tab();
 
-        gtk_widget_show_all(GTK_WIDGET(mWidgets.main_window));
+        g_signal_connect(mWidgets.notebook, "switch-page", G_CALLBACK(on_tab_changed), this);
     }
 
     ~MiniServo()
@@ -356,13 +444,25 @@ struct MiniServo
         // todo!
     }
 
+    void add_tab()
+    {
+        ServoTab *pTab = new ServoTab;
+        pTab->init(&mEventHandler, mWidgets.notebook);
+        mTabs.push_back(pTab);
+        if (mpCurrentTab == NULL)
+        {
+            mpCurrentTab = pTab;
+        }
+        gtk_widget_show_all(GTK_WIDGET(mWidgets.main_window));
+    }
+
     void run()
     {
         while (true) {
             gtk_main_iteration_do(false);
             CefDoMessageLoopWork();
-            if (mpCurrentTab) {
-                mpCurrentTab->update();
+            for (std::vector<ServoTab *>::iterator it = mTabs.begin() ; it != mTabs.end() ; ++it) {
+                (*it)->update();
             }
 
             if (mQuit) {
@@ -376,9 +476,12 @@ struct MiniServo
         GtkWindow *main_window;
         GtkNotebook *notebook;
         GtkStatusbar *status_bar;
+        GtkMenuItem *mi_new_tab;
+        GtkMenuItem *mi_quit;
     };
 
     ServoTab *mpCurrentTab;
+    std::vector<ServoTab *> mTabs;
     Widgets mWidgets;
     bool mQuit;
     EventHandler mEventHandler;
@@ -399,16 +502,27 @@ struct MiniServo
         mWidgets.main_window = GTK_WINDOW(gtk_builder_get_object(pBuilder, "window1"));
         mWidgets.status_bar = GTK_STATUSBAR(gtk_builder_get_object(pBuilder, "status_bar"));
         mWidgets.notebook = GTK_NOTEBOOK(gtk_builder_get_object(pBuilder, "notebook1"));
+        mWidgets.mi_new_tab = GTK_MENU_ITEM(gtk_builder_get_object(pBuilder, "menuitem_new_tab"));
+        mWidgets.mi_quit = GTK_MENU_ITEM(gtk_builder_get_object(pBuilder, "menuitem_quit"));
 
         assert(mWidgets.main_window);
         assert(mWidgets.notebook);
         assert(mWidgets.status_bar);
+        assert(mWidgets.mi_new_tab);
+        assert(mWidgets.mi_quit);
 
         g_signal_connect(GTK_WIDGET(mWidgets.main_window), "destroy", G_CALLBACK(cb_quit), this);
+        g_signal_connect(GTK_WIDGET(mWidgets.mi_new_tab), "activate", G_CALLBACK(cb_new_tab), this);
+        g_signal_connect(GTK_WIDGET(mWidgets.mi_quit), "activate", G_CALLBACK(cb_quit), this);
     }
 
-    void set_title(const char *pTitle) {
-        gtk_window_set_title(mWidgets.main_window, pTitle);
+    void set_title(const std::string &title) {
+        std::string window_title = title;
+        if (window_title.length() > 0) {
+            window_title.append(" - ");
+        }
+        window_title.append("MiniServo (GTK)");
+        gtk_window_set_title(mWidgets.main_window, window_title.c_str());
     }
 
     static void cb_quit(GtkWidget *, gpointer user_data) {
@@ -416,10 +530,25 @@ struct MiniServo
         ms->mQuit = true;
     }
 
+    static void cb_new_tab(GtkWidget *, gpointer user_data)
+    {
+        MiniServo *ms = (MiniServo *) user_data;
+        ms->add_tab();
+    }
+
     static void on_load_state_changed(void *user_data)
     {
         MiniServo *ms = (MiniServo *) user_data;
         assert(false);
+    }
+
+    static void on_tab_changed(GtkNotebook *notebook, GtkWidget *page, guint page_num, gpointer user_data)
+    {
+        MiniServo *ms = (MiniServo *) user_data;
+        ms->mpCurrentTab->on_focus_lost();
+        ms->mpCurrentTab = ms->mTabs[page_num];
+        ms->mpCurrentTab->on_focus_gained();
+        ms->set_title(ms->mpCurrentTab->get_title());
     }
 };
 
