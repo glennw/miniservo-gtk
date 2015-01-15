@@ -134,6 +134,10 @@ set(MINISERVO_SRCS
 
 link_directories(${GTK3_LIBRARY_DIRS} ../servo/ports/cef/target)
 
+file(GLOB cef_libs "../servo/ports/cef/target/libembedding*")
+get_filename_component(cef_file ${cef_libs} NAME_WE)
+string(SUBSTRING ${cef_file}, 3, 26, cef_hash)
+
 add_executable(miniservo ${MINISERVO_SRCS})
 
-target_link_libraries(miniservo ${GTK3_LIBRARIES} X11 GL embedding-87c033796c1cb109)
+target_link_libraries(miniservo ${GTK3_LIBRARIES} X11 GL ${cef_hash})
