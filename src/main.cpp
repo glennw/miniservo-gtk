@@ -137,6 +137,11 @@ struct ServoTab : public CefClient,
         g_signal_connect(mWidgets.forward_button, "clicked", G_CALLBACK(cb_forward_clicked), this);
     }
 
+    GtkWidget *get_widget()
+    {
+        return GTK_WIDGET(mWidgets.grid);
+    }
+
     void init(TabEventHandler *pEventHandler, GtkNotebook *pParent)
     {
         mTitle = "New Tab";
@@ -157,7 +162,7 @@ struct ServoTab : public CefClient,
         mWidgets.page_title = new ServoTabLabel(on_tab_closed, this);
 
         get_widgets(pTabBuilder);
-        gtk_notebook_append_page(pParent, GTK_WIDGET(mWidgets.grid), mWidgets.page_title->get_widget());
+        gtk_notebook_append_page(pParent, get_widget(), mWidgets.page_title->get_widget());
         g_object_unref(G_OBJECT(pTabBuilder));
 
         gtk_widget_set_can_focus(mpWidget, TRUE);
@@ -402,7 +407,7 @@ struct MiniServo
             printf("TODO: Implement clean shutdown!\n");
             //assert(mpApp->mpCurrentTab != pTab);    // todo
             //mpApp->mTabs.erase(std::remove(mpApp->mTabs.begin(), mpApp->mTabs.end(), pTab), mpApp->mTabs.end());
-            //gint page_index = gtk_notebook_page_num(mpApp->mWidgets.notebook, GTK_WIDGET(pTab->mWidgets.grid));
+            //gint page_index = gtk_notebook_page_num(mpApp->mWidgets.notebook, pTab->get_widget()));
             //assert(page_index != -1);
             //gtk_notebook_remove_page(mpApp->mWidgets.notebook, page_index);
             //delete pTab;
@@ -444,7 +449,7 @@ struct MiniServo
         // todo!
     }
 
-    void add_tab()
+    ServoTab *add_tab()
     {
         ServoTab *pTab = new ServoTab;
         pTab->init(&mEventHandler, mWidgets.notebook);
@@ -454,6 +459,13 @@ struct MiniServo
             mpCurrentTab = pTab;
         }
         gtk_widget_show_all(GTK_WIDGET(mWidgets.main_window));
+        return pTab;
+    }
+
+    void set_current_tab(ServoTab *pTab)
+    {
+        gint pg = gtk_notebook_page_num(mWidgets.notebook, pTab->get_widget());
+        gtk_notebook_set_current_page(mWidgets.notebook, pg);
     }
 
     void run()
@@ -533,7 +545,8 @@ struct MiniServo
     static void cb_new_tab(GtkWidget *, gpointer user_data)
     {
         MiniServo *ms = (MiniServo *) user_data;
-        ms->add_tab();
+        ServoTab *pTab = ms->add_tab();
+        ms->set_current_tab(pTab);
     }
 
     static void on_load_state_changed(void *user_data)
