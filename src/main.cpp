@@ -404,13 +404,32 @@ struct MiniServo
         }
         virtual void OnClosed(struct ServoTab *pTab)
         {
-            printf("TODO: Implement clean shutdown!\n");
-            //assert(mpApp->mpCurrentTab != pTab);    // todo
-            //mpApp->mTabs.erase(std::remove(mpApp->mTabs.begin(), mpApp->mTabs.end(), pTab), mpApp->mTabs.end());
-            //gint page_index = gtk_notebook_page_num(mpApp->mWidgets.notebook, pTab->get_widget()));
-            //assert(page_index != -1);
-            //gtk_notebook_remove_page(mpApp->mWidgets.notebook, page_index);
-            //delete pTab;
+            pTab->on_focus_lost();
+            mpApp->mTabs.erase(std::remove(mpApp->mTabs.begin(), mpApp->mTabs.end(), pTab), mpApp->mTabs.end());
+            gint page_index = gtk_notebook_page_num(mpApp->mWidgets.notebook, pTab->get_widget());
+            assert(page_index != -1);
+            gtk_notebook_remove_page(mpApp->mWidgets.notebook, page_index);
+            delete pTab;
+            if (mpApp->mpCurrentTab == pTab)
+            {
+                if (gtk_notebook_get_n_pages(mpApp->mWidgets.notebook) == 0)
+                {
+                    mpApp->mQuit = true;
+                }
+                else
+                {
+                    gint current_page_index = gtk_notebook_get_current_page(mpApp->mWidgets.notebook);
+                    assert(current_page_index != -1);
+                    GtkGrid *pCurrentPage = GTK_GRID(gtk_notebook_get_nth_page(mpApp->mWidgets.notebook, current_page_index));
+                    for (std::vector<ServoTab *>::iterator it = mpApp->mTabs.begin() ; it != mpApp->mTabs.end() ; ++it)
+                    {
+                        if ((*it)->mWidgets.grid == pCurrentPage)
+                        {
+                            (*it)->on_focus_gained();
+                        }
+                    }
+                }
+            }
             // TODO: This leaks like a sieve.
         }
 
