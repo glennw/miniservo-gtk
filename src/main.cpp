@@ -239,12 +239,15 @@ struct ServoTab : public CefClient,
     // CefRenderHandler implementation
     virtual bool GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override {
         rect.x = rect.y = 0;
-        rect.width = mWidth * mHiDpiScale;
-        rect.height = mHeight * mHiDpiScale;
+        rect.width = mWidth;
+        rect.height = mHeight;
         return true;
     }
     virtual bool GetBackingRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override {
-        return GetViewRect(browser, rect);
+        rect.x = rect.y = 0;
+        rect.width = mWidth * mHiDpiScale;
+        rect.height = mHeight * mHiDpiScale;
+        return true;
     }
     virtual void OnPaint(CefRefPtr<CefBrowser> browser,
                          CefRenderHandler::PaintElementType type,
