@@ -132,9 +132,9 @@ set(MINISERVO_SRCS
     src/libcef_dll/transfer_util.cpp
    )
 
-link_directories(${GTK3_LIBRARY_DIRS} ../servo/ports/cef/target)
+link_directories(${GTK3_LIBRARY_DIRS} ../servo/ports/cef/target/debug)
 
-file(GLOB cef_libs "../servo/ports/cef/target/libembedding*")
+file(GLOB cef_libs "../servo/ports/cef/target/debug/libembedding*")
 get_filename_component(cef_file ${cef_libs} NAME_WE)
 string(SUBSTRING ${cef_file}, 3, 26, cef_hash)
 
